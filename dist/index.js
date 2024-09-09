@@ -284,9 +284,16 @@ const decodeOIDCToken = (token, issuer) => __awaiter(void 0, void 0, void 0, fun
     // Verify and decode token
     const jwks = jose.createLocalJWKSet(yield getJWKS(issuer));
     const { payload } = yield jose.jwtVerify(token, jwks, {
-        audience: OIDC_AUDIENCE,
-        issuer
+        audience: OIDC_AUDIENCE
     });
+    if (!payload.iss) {
+        throw new Error('Missing "iss" claim');
+    }
+    // Check that the issuer STARTS WITH the expected issuer URL to account for
+    // the fact that the value may include an enterprise-specific slug
+    if (!payload.iss.startsWith(issuer)) {
+        throw new Error(`Unexpected "iss" claim: ${payload.iss}`);
+    }
     return payload;
 });
 const getJWKS = (issuer) => __awaiter(void 0, void 0, void 0, function* () {
@@ -25351,15 +25358,15 @@ exports.flattenedDecrypt = flattenedDecrypt;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.FlattenedEncrypt = exports.unprotected = void 0;
+exports.FlattenedEncrypt = void 0;
 const base64url_js_1 = __nccwpck_require__(80518);
+const private_symbols_js_1 = __nccwpck_require__(78863);
 const encrypt_js_1 = __nccwpck_require__(76476);
 const encrypt_key_management_js_1 = __nccwpck_require__(33286);
 const errors_js_1 = __nccwpck_require__(94419);
 const is_disjoint_js_1 = __nccwpck_require__(6063);
 const buffer_utils_js_1 = __nccwpck_require__(1691);
 const validate_crit_js_1 = __nccwpck_require__(50863);
-exports.unprotected = Symbol();
 class FlattenedEncrypt {
     _plaintext;
     _protectedHeader;
@@ -25453,7 +25460,7 @@ class FlattenedEncrypt {
             let parameters;
             ({ cek, encryptedKey, parameters } = await (0, encrypt_key_management_js_1.default)(alg, enc, key, this._cek, this._keyManagementParameters));
             if (parameters) {
-                if (options && exports.unprotected in options) {
+                if (options && private_symbols_js_1.unprotected in options) {
                     if (!this._unprotectedHeader) {
                         this.setUnprotectedHeader(parameters);
                     }
@@ -25569,6 +25576,7 @@ exports.generalDecrypt = generalDecrypt;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.GeneralEncrypt = void 0;
 const encrypt_js_1 = __nccwpck_require__(81555);
+const private_symbols_js_1 = __nccwpck_require__(78863);
 const errors_js_1 = __nccwpck_require__(94419);
 const cek_js_1 = __nccwpck_require__(43987);
 const is_disjoint_js_1 = __nccwpck_require__(6063);
@@ -25723,7 +25731,7 @@ class GeneralEncrypt {
                     .setKeyManagementParameters({ p2c })
                     .encrypt(recipient.key, {
                     ...recipient.options,
-                    [encrypt_js_1.unprotected]: true,
+                    [private_symbols_js_1.unprotected]: true,
                 });
                 jwe.ciphertext = flattened.ciphertext;
                 jwe.iv = flattened.iv;
@@ -25855,7 +25863,7 @@ exports.calculateJwkThumbprintUri = calculateJwkThumbprintUri;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.createLocalJWKSet = exports.LocalJWKSet = void 0;
+exports.createLocalJWKSet = void 0;
 const import_js_1 = __nccwpck_require__(74230);
 const errors_js_1 = __nccwpck_require__(94419);
 const is_object_js_1 = __nccwpck_require__(39127);
@@ -25954,7 +25962,6 @@ class LocalJWKSet {
         return importWithAlgCache(this._cached, jwk, alg);
     }
 }
-exports.LocalJWKSet = LocalJWKSet;
 async function importWithAlgCache(cache, jwk, alg) {
     const cached = cache.get(jwk) || cache.set(jwk, {}).get(jwk);
     if (cached[alg] === undefined) {
@@ -26003,7 +26010,7 @@ function isCloudflareWorkers() {
 let USER_AGENT;
 if (typeof navigator === 'undefined' || !navigator.userAgent?.startsWith?.('Mozilla/5.0 ')) {
     const NAME = 'jose';
-    const VERSION = 'v5.7.0';
+    const VERSION = 'v5.8.0';
     USER_AGENT = `${NAME}/${VERSION}`;
 }
 exports.jwksCache = Symbol();
@@ -27858,6 +27865,18 @@ exports["default"] = (protectedHeader, encodedPayload, options = {}) => {
     }
     return payload;
 };
+
+
+/***/ }),
+
+/***/ 78863:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.unprotected = void 0;
+exports.unprotected = Symbol();
 
 
 /***/ }),
@@ -68165,19 +68184,14 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
 const attest_1 = __nccwpck_require__(74113);
 const core = __importStar(__nccwpck_require__(42186));
-const VALID_SERVER_URLS = [
-    'https://github.com',
-    new RegExp('^https://[a-z0-9-]+\\.ghe\\.com$')
-];
 /**
  * The main function for the action.
  * @returns {Promise<void>} Resolves when the action is complete.
  */
 async function run() {
     try {
-        const issuer = getIssuer();
         // Calculate subject from inputs and generate provenance
-        const predicate = await (0, attest_1.buildSLSAProvenancePredicate)(issuer);
+        const predicate = await (0, attest_1.buildSLSAProvenancePredicate)();
         core.setOutput('predicate', predicate.params);
         core.setOutput('predicate-type', predicate.type);
     }
@@ -68186,19 +68200,6 @@ async function run() {
         // Fail the workflow run if an error occurs
         core.setFailed(error.message);
     }
-}
-// Derive the current OIDC issuer based on the server URL
-function getIssuer() {
-    const serverURL = process.env.GITHUB_SERVER_URL || 'https://github.com';
-    // Ensure the server URL is a valid GitHub server URL
-    if (!VALID_SERVER_URLS.some(valid_url => serverURL.match(valid_url))) {
-        throw new Error(`Invalid server URL: ${serverURL}`);
-    }
-    let host = new URL(serverURL).hostname;
-    if (host === 'github.com') {
-        host = 'githubusercontent.com';
-    }
-    return `https://token.actions.${host}`;
 }
 
 
